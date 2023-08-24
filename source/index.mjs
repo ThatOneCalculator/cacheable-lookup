@@ -175,7 +175,7 @@ export default class CacheableLookup {
 			};
 		}
 
-		let cached = await this.query(hostname);
+		let cached = await this.query(hostname, options);
 
 		if (options.family === 6) {
 			const filtered = cached.filter(entry => entry.family === 6);
@@ -213,7 +213,7 @@ export default class CacheableLookup {
 		return cached[0];
 	}
 
-	async query(hostname) {
+	async query(hostnamem, options) {
 		let source = 'cache';
 		let cached = await this._cache.get(hostname);
 
@@ -228,7 +228,7 @@ export default class CacheableLookup {
 				cached = await pending;
 			} else {
 				source = 'query';
-				const newPromise = this.queryAndCache(hostname);
+				const newPromise = this.queryAndCache(hostname, options);
 				this._pending[hostname] = newPromise;
 				this.stats.query++;
 				try {
@@ -246,12 +246,21 @@ export default class CacheableLookup {
 		return cached;
 	}
 
-	async _resolve(hostname) {
+	async _resolve(hostname, family) {
 		// ANY is unsafe as it doesn't trigger new queries in the underlying server.
-		const [A, AAAA] = await Promise.all([
-			ignoreNoResultErrors(this._resolve4(hostname, ttl)),
-			ignoreNoResultErrors(this._resolve6(hostname, ttl))
-		]);
+		const promiseArray = [];
+		if (family === 4) {
+			promiseArray.push(ignoreNoResultErrors(this._resolve4(hostname, ttl)), []);
+		} else if (family === 6) {
+			promiseArray.push([], ignoreNoResultErrors(this._resolve6(hostname, ttl)));
+		} else {
+			promiseArray.push(
+				ignoreNoResultErrors(this._resolve4(hostname, ttl)),
+				ignoreNoResultErrors(this._resolve6(hostname, ttl))
+			);
+		}
+
+		const [A, AAAA] = await Promise.all(promiseArray);
 
 		let aTtl = 0;
 		let aaaaTtl = 0;
@@ -338,12 +347,12 @@ export default class CacheableLookup {
 		}
 	}
 
-	async queryAndCache(hostname) {
+	async queryAndCache(hostname, options) {
 		if (this._hostnamesToFallback.has(hostname)) {
 			return this._dnsLookup(hostname, all);
 		}
 
-		let query = await this._resolve(hostname);
+		let query = await this._resolve(hostname, options.family);
 
 		if (query.entries.length === 0 && this._dnsLookup) {
 			query = await this._lookup(hostname);
